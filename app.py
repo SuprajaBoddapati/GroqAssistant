@@ -41,14 +41,24 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-audio_file = st.audio_input("Or record a question", sample_rate=16000)
-ask_with_audio = st.button(
-    "Transcribe and ask",
-    disabled=audio_file is None,
+submission = st.chat_input(
+    "Ask anything",
+    accept_audio=True,
+    audio_sample_rate=16000,
 )
-prompt = st.chat_input("Ask anything")
 
-if ask_with_audio and audio_file is not None:
+if isinstance(submission, str):
+    prompt = submission.strip()
+    audio_file = None
+elif submission is not None:
+    prompt = submission.text.strip()
+    audio_file = submission.audio
+else:
+    prompt = None
+    audio_file = None
+
+if audio_file is not None:
+    typed_prompt = prompt
     prompt = None
     if not api_key:
         st.error("GROQ_API_KEY is required to transcribe a recording.")
@@ -60,14 +70,17 @@ if ask_with_audio and audio_file is not None:
                 api_key=api_key,
                 max_retries=0,
             ).audio.transcriptions.create(
-                file=(audio_file.name, audio_file.getvalue(), audio_file.type),
+                file=audio_file,
                 model=TRANSCRIPTION_MODEL,
                 response_format="json",
             )
-        prompt = transcription.text.strip()
-        if prompt:
-            st.caption(f"Transcription: {prompt}")
+        transcribed_prompt = transcription.text.strip()
+        if transcribed_prompt:
+            prompt = " ".join(
+                part for part in (typed_prompt, transcribed_prompt) if part
+            )
         else:
+            prompt = None
             st.warning("No speech was detected. Please record your question again.")
     except RateLimitError as error:
         retry_after = error.response.headers.get("retry-after")
