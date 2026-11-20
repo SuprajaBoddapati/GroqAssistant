@@ -3,79 +3,78 @@ import os
 
 import streamlit as st
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError
+from groq import APIError, Groq, RateLimitError
 
 load_dotenv()
 
-st.title("My GenAI Assistant")
-st.write("Ask a question and get a short answer using Groq.")
+MODEL = "openai/gpt-oss-20b"
+SYSTEM_MESSAGE = "You are a helpful assistant. Answer clearly and concisely."
+
+st.set_page_config(page_title="Groq Assistant", page_icon="💬")
+st.title("Groq Assistant")
+st.caption("Ask a question and get an answer powered by Groq.")
 
 api_key = os.getenv("GROQ_API_KEY")
+if not api_key:
+    try:
+        api_key = st.secrets["GROQ_API_KEY"]
+    except (FileNotFoundError, KeyError):
+        api_key = None
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+with st.sidebar:
+    st.subheader("About")
+    st.write(f"Model: `{MODEL}`")
+    if st.button("Clear conversation", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
 
 if not api_key:
-    st.error("Configure GROQ_API_KEY in .env or Streamlit Secrets.")
-    st.stop()
-
-# Avoid automatically retrying requests that hit a rate limit.
-client = Groq(api_key=api_key, max_retries=0)
-
-with st.form("question_form"):
-    question = st.text_area(
-        "Enter your question",
-        placeholder="Example: What is generative AI?",
-        max_chars=1000,
+    st.warning(
+        "Set `GROQ_API_KEY` in your `.env` file or Streamlit secrets to start chatting."
     )
-    submitted = st.form_submit_button("Get Answer")
 
-if submitted:
-    if not question.strip():
-        st.warning("Please enter a question.")
-    else:
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+if prompt := st.chat_input("Ask anything"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    if not api_key:
+        st.error("GROQ_API_KEY is required to send a message.")
+        st.stop()
+
+    with st.chat_message("assistant"):
         try:
-            with st.spinner("Generating your answer..."):
-                response = client.chat.completions.create(
-                    model="openai/gpt-oss-20b",
-                    max_completion_tokens=512,
+            with st.spinner("Thinking..."):
+                response = Groq(api_key=api_key, max_retries=0).chat.completions.create(
+                    model=MODEL,
                     messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a helpful teacher. "
-                                "Use simple English. "
-                                "Keep your answer within 100 words."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": question.strip(),
-                        },
+                        {"role": "system", "content": SYSTEM_MESSAGE},
+                        *st.session_state.messages,
                     ],
+                    temperature=0.2,
+                    max_completion_tokens=512,
                 )
-
             answer = response.choices[0].message.content
-
             if answer:
-                st.subheader("Answer")
-                st.write(answer)
-            else:
-                st.info(
-                    "No answer text was returned within the output "
-                    "budget. Try a simpler question."
+                st.markdown(answer)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": answer}
                 )
-
+            else:
+                st.info("Groq did not return an answer. Please try another question.")
         except RateLimitError as error:
             retry_after = error.response.headers.get("retry-after")
-
+            message = "Groq usage limit reached. Please try again later."
             if retry_after:
-                st.warning(
-                    "Groq usage limit reached. "
-                    f"Try again after {retry_after} seconds."
-                )
-            else:
-                st.warning(
-                    "Groq usage limit reached. Please try again later."
-                )
-
-        except Exception:
-            logging.exception("Groq request failed")
-            st.error("Unable to generate an answer. Please try again.")
+                message = f"Groq usage limit reached. Try again after {retry_after} seconds."
+            st.warning(message)
+        except APIError:
+            logging.exception("Groq chat completion failed")
+            st.error("The request to Groq failed. Check your API key and try again.")
