@@ -8,6 +8,7 @@ from groq import APIError, Groq, RateLimitError
 load_dotenv()
 
 MODEL = "openai/gpt-oss-20b"
+TRANSCRIPTION_MODEL = "whisper-large-v3-turbo"
 SYSTEM_MESSAGE = "You are a helpful assistant. Answer clearly and concisely."
 
 st.set_page_config(page_title="Groq Assistant", page_icon="💬")
@@ -40,7 +41,45 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask anything"):
+audio_file = st.audio_input("Or record a question", sample_rate=16000)
+ask_with_audio = st.button(
+    "Transcribe and ask",
+    disabled=audio_file is None,
+)
+prompt = st.chat_input("Ask anything")
+
+if ask_with_audio and audio_file is not None:
+    prompt = None
+    if not api_key:
+        st.error("GROQ_API_KEY is required to transcribe a recording.")
+        st.stop()
+
+    try:
+        with st.spinner("Transcribing your question..."):
+            transcription = Groq(
+                api_key=api_key,
+                max_retries=0,
+            ).audio.transcriptions.create(
+                file=(audio_file.name, audio_file.getvalue(), audio_file.type),
+                model=TRANSCRIPTION_MODEL,
+                response_format="json",
+            )
+        prompt = transcription.text.strip()
+        if prompt:
+            st.caption(f"Transcription: {prompt}")
+        else:
+            st.warning("No speech was detected. Please record your question again.")
+    except RateLimitError as error:
+        retry_after = error.response.headers.get("retry-after")
+        message = "Groq usage limit reached. Please try again later."
+        if retry_after:
+            message = f"Groq usage limit reached. Try again after {retry_after} seconds."
+        st.warning(message)
+    except APIError:
+        logging.exception("Groq audio transcription failed")
+        st.error("Could not transcribe the recording. Check your API key and try again.")
+
+if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)

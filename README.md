@@ -1,6 +1,6 @@
 # GenAI Groq Assistant
 
-A chat UI built with Streamlit and Groq.
+A chat UI built with Streamlit and Groq. Ask questions by typing or recording them with your microphone; voice recordings are transcribed with Groq Whisper.
 
 ## Run locally
 
